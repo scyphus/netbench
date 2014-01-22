@@ -39,6 +39,35 @@ struct _ping {
     int cancel;
 };
 
+/*
+ * Traceroute
+ */
+typedef struct _traceroute_result_item {
+    int stat;
+    int ttl;
+    /*uint16_t sport;*/
+    double sent;
+    double recv;
+    struct sockaddr_storage saddr;
+    socklen_t saddrlen;
+} nb_traceroute_result_item_t;
+typedef struct _traceroute_result {
+    size_t cnt;
+    size_t cntres;
+    nb_traceroute_result_item_t *items;
+} nb_traceroute_result_t;
+typedef struct _traceroute nb_traceroute_t;
+typedef void (*nb_traceroute_cb_f)(nb_traceroute_t *, int,
+                                   const struct sockaddr_storage *, socklen_t,
+                                   double);
+struct _traceroute {
+    nb_traceroute_cb_f cb;
+    void *user;
+    nb_traceroute_result_t *last_results;
+    int cancel;
+};
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +81,14 @@ extern "C" {
     int nb_ping_set_callback(nb_ping_t *, nb_ping_cb_f, void *);
     int nb_ping_exec(nb_ping_t *, const char *, size_t, int, double, double);
     void nb_ping_close(nb_ping_t *);
+
+    /* Traceroute */
+    nb_traceroute_t * nb_traceroute_new(void);
+    int
+    nb_traceroute_set_callback(nb_traceroute_t *, nb_traceroute_cb_f, void *);
+    int nb_traceroute_exec(nb_traceroute_t *, const char *, int, int, double);
+    void nb_traceroute_delete(nb_traceroute_t *);
+
 
 #ifdef __cplusplus
 }
