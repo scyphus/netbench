@@ -57,6 +57,15 @@ struct icmp6_hdr {
     // data...
 } __attribute__ ((packed));
 
+/* Prototype declarations */
+static int
+_ping_send(nb_ping_t *, struct addrinfo *, uint16_t, uint16_t, size_t,
+           double *);
+static int
+_ping_recv(nb_ping_t *, struct addrinfo *, uint16_t *, double *,
+           nb_ping_result_t *);
+
+
 /*
  * Send an ICMP echo request
  */
