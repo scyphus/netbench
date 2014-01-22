@@ -8,9 +8,43 @@
 #ifndef _NETBENCH_H
 #define _NETBENCH_H
 
+#include <stdint.h>
+#include <netdb.h>
+
+/*
+ * Measurement results of ping
+ */
+typedef struct _ping_result_item {
+    int stat;
+    uint16_t ident;
+    double sent;
+    double recv;
+} nb_ping_result_item_t;
+typedef struct _ping_result {
+    size_t cnt;
+    nb_ping_result_item_t *items;
+} nb_ping_result_t;
+
+typedef struct _ping nb_ping_t;
+
+/* Callback function */
+typedef void (*nb_ping_cb_f)(nb_ping_t *, int, double);
+
+struct _ping {
+    int sock;
+    int family;
+    nb_ping_cb_f cb;
+    void *user;
+    nb_ping_result_t *last_results;
+    int cancel;
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+    nb_ping_t * nb_ping_open(int);
+    void nb_ping_close(nb_ping_t *);
 
 #ifdef __cplusplus
 }

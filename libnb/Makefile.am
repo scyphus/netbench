@@ -4,10 +4,12 @@
 #      Hirochika Asai  <asai@scyphus.co.jp>
 #
 
+AM_CPPFLAGS = -I$(top_srcdir)/include
+
 noinst_HEADERS = netbench_private.h
 
 noinst_LTLIBRARIES = libnb.la
-libnb_la_SOURCES = libnb.c
+libnb_la_SOURCES = libnb.c ping.c
 libnetbench_la_LDFLAGS = -lresolv
 
 CLEANFILES = *~

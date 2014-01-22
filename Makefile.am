@@ -4,5 +4,5 @@
 #      Hirochika Asai  <asai@scyphus.co.jp>
 #
 
-SUBDIRS = toolset
+SUBDIRS = include libnb toolset
 CLEANFILES = *~

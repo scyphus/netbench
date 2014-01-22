@@ -88,6 +88,16 @@ nb_ping_set_callback(nb_ping_t *obj, nb_ping_cb_f cbfunc, void *user)
 }
 
 /*
+ * Send a ping packet and receive its reply
+ */
+int
+nb_ping_exec(nb_ping_t *obj, const char *target, size_t sz, int n,
+             double interval, double timeout)
+{
+    return -1;
+}
+
+/*
  * Close the ping socket
  */
 void

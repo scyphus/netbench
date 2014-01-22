@@ -8,6 +8,15 @@
 #ifndef _NETBENCH_PRIVATE_H
 #define _NETBENCH_PRIVATE_H
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+    double getmicrotime(void);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* _NETBENCH_PRIVATE_H */
 
 /*

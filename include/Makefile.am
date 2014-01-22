@@ -4,4 +4,5 @@
 #      Hirochika Asai  <asai@scyphus.co.jp>
 #
 
+noinst_HEADERS = netbench.h
 CLEANFILES = *~

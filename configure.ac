@@ -103,7 +103,7 @@ if test $netbench_statedir = "/dev/null"; then
 fi
 
 
-AC_CONFIG_FILES([Makefile toolset/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile libnb/Makefile toolset/Makefile])
 AC_OUTPUT
 
 

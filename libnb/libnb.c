@@ -5,6 +5,26 @@
  *      Hirochika Asai  <asai@scyphus.co.jp>
  */
 
+#include "netbench_private.h"
+#include <sys/time.h>
+
+/*
+ * Get current time in microtime
+ */
+double
+getmicrotime(void)
+{
+    struct timeval tv;
+    double microsec;
+
+    if ( 0 != gettimeofday(&tv, NULL) ) {
+        return 0.0;
+    }
+
+    microsec = (double)tv.tv_sec + (1.0 * tv.tv_usec / 1000000);
+
+    return microsec;
+}
 
 /*
  * Local variables:
