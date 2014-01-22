@@ -6,13 +6,14 @@
  */
 
 #include "netbench_private.h"
+#include <netbench.h>
 #include <sys/time.h>
 
 /*
  * Get current time in microtime
  */
 double
-getmicrotime(void)
+nb_microtime(void)
 {
     struct timeval tv;
     double microsec;
@@ -25,6 +26,44 @@ getmicrotime(void)
 
     return microsec;
 }
+
+/*
+ * Calculate checksum
+ */
+uint16_t
+nb_checksum(const uint8_t *buf, size_t len) {
+    size_t nleft;
+    int32_t sum;
+    const uint16_t *cur;
+    union {
+        uint16_t us;
+        uint8_t uc[2];
+    } last;
+    uint16_t ret;
+
+    nleft = len;
+    sum = 0;
+    cur = (const uint16_t *)buf;
+
+    while ( nleft > 1 ) {
+        sum += *cur;
+        cur += 1;
+        nleft -= 2;
+    }
+
+    if ( 1 == nleft ) {
+        last.uc[0] = *(const uint8_t *)cur;
+        last.uc[1] = 0;
+        sum += last.us;
+    }
+
+    sum = (sum >> 16) + (sum & 0xffff);
+    sum += (sum >> 16);
+    ret = ~sum;
+
+    return ret;
+}
+
 
 /*
  * Local variables:

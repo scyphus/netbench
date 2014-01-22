@@ -43,7 +43,11 @@ struct _ping {
 extern "C" {
 #endif
 
+    double nb_microtime(void);
+    uint16_t nb_checksum(const uint8_t *, size_t);
+
     nb_ping_t * nb_ping_open(int);
+    int nb_ping_exec(nb_ping_t *, const char *, size_t, int, double, double);
     void nb_ping_close(nb_ping_t *);
 
 #ifdef __cplusplus

@@ -12,7 +12,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-    double getmicrotime(void);
+
 #ifdef __cplusplus
 }
 #endif
