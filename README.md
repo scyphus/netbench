@@ -10,4 +10,6 @@ the QoS in mobile networks.
 * ICMP ping (IPv4, IPv6)
 
 ## Command line tools
-    Run all types of measurement: ./toolset/netbench
+
+### Run all types of measurement
+    $ ./toolset/netbench
