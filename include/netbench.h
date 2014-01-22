@@ -179,6 +179,10 @@ extern "C" {
     nb_http_header_t * nb_parse_http_header(const char *, size_t);
     void nb_http_header_delete(nb_http_header_t *);
     off_t nb_http_header_get_content_length(nb_http_header_t *);
+    int nb_http_get(const char *url, char **, off_t *);
+    int
+    nb_http_post(const char *, const char *, const char *, size_t, char **,
+                 off_t *);
 
     /* Ping */
     nb_ping_t * nb_ping_open(int);

@@ -7,11 +7,13 @@
 
 #include "netbench_private.h"
 #include <netbench.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 /* Prototype declarations */
 static __inline__ int _is_scheme_char(int);
@@ -831,6 +833,582 @@ nb_http_header_get_content_length(nb_http_header_t *hdr)
 
     return clen;
 }
+
+/*
+ * Read the response header
+ * Note that a part of response body is possibly read due to the buffer size
+ */
+static int
+_read_response_header(int sock, char **hdrstr, off_t *hdrlen, char **bdystr,
+                      off_t *bdylen)
+{
+    /* Buffer */
+    char buf[4096];
+    /* Counters */
+    ssize_t i;
+    ssize_t nr;
+    ssize_t n;
+    int nl;
+    /* A flag of end-of-header */
+    int eoh;
+    /* Temporary string */
+    char *tmpstr;
+
+    /* Read until the end of the response header */
+    eoh = 0;
+    nl = 0;
+    nr = 0;
+    *hdrlen = 0;
+    *hdrstr = NULL;
+    while ( !eoh ) {
+        /* Receive */
+        n = read(sock, buf, sizeof(buf));
+        if ( n <= 0 ) {
+            /* Cannot read any more response */
+            if ( NULL != *hdrstr ) {
+                free(*hdrstr);
+            }
+            return -ETIMEDOUT;
+        }
+        /* Search the end-of-header */
+        for ( i = 0; i < n; i++ ) {
+            if ( '\n' == buf[i] ) {
+                nl++;
+            } else if ( '\r' == buf[i] && i + 1 < n && '\n' == buf[i+1] ) {
+                i++;
+                nl++;
+            } else {
+                nl = 0;
+            }
+            if ( 2 == nl ) {
+                /* End-of-header */
+                eoh = 1;
+                i++;
+                break;
+            }
+        }
+        *hdrlen += i;
+
+        /* Extend the response header buffer */
+        tmpstr = realloc(*hdrstr, sizeof(char) * (size_t)(*hdrlen + 1));
+        if ( NULL == tmpstr ) {
+            /* Memory error */
+            if ( NULL != *hdrstr ) {
+                free(*hdrstr);
+            }
+            return -ENOMEM;
+        }
+        *hdrstr = tmpstr;
+        (void)memcpy((*hdrstr) + nr, buf, i);
+        /* Convert asciz to reduce buffer overflow risk */
+        (*hdrstr)[*hdrlen] = '\0';
+
+        nr += n;
+    }
+
+    /* Read body */
+    if ( nr > *hdrlen ) {
+        /* Compute the loaded body length */
+        *bdylen = nr - *hdrlen;
+        /* +1 for null termination for safety */
+        *bdystr = malloc(sizeof(char) * (size_t)(*bdylen + 1));
+        if ( NULL ==  *bdystr ) {
+            if ( NULL != *hdrstr ) {
+                free(*hdrstr);
+            }
+            return -ENOMEM;
+        }
+        (void)memcpy(*bdystr, buf + i, (size_t)*bdylen);
+        (*bdystr)[*bdylen] = '\0';
+    } else {
+        *bdystr = NULL;
+        *bdylen = 0;
+    }
+
+    return 0;
+}
+
+/*
+ * Build Request-URI corresponding the input parsed URL
+ */
+static char *
+_build_request_uri(nb_parsed_url_t *purl)
+{
+    size_t len1;
+    size_t len2;
+    char *str1;
+    char *str2;
+    char *rurl;
+
+    /* Get path */
+    if ( NULL != purl->path ) {
+        /* Get length */
+        len1 = strlen(purl->path);
+        str1 = purl->path;
+    } else {
+        len1 = 0;
+        str1 = "";
+    }
+
+    /* Get query */
+    if ( NULL != purl->query ) {
+        /* Get length */
+        len2 = strlen(purl->query);
+        str2 = purl->query;
+    } else {
+        str2 = NULL;
+    }
+
+    if ( NULL != str2 ) {
+        /* Allocate request url */
+        rurl = malloc(sizeof(char) * (len1 + len2 + 3));
+        if ( NULL == rurl ) {
+            return NULL;
+        }
+
+        /* Copy */
+        rurl[0] = '/';
+        (void)memcpy(rurl+1, str1, len1);
+        rurl[len1+1] = '?';
+        (void)memcpy(rurl+len1+2, str2, len2);
+        rurl[len1+len2+2] = '\0';
+    } else {
+        /* Allocate request url */
+        rurl = malloc(sizeof(char) * (len1 + 2));
+        if ( NULL == rurl ) {
+            return NULL;
+        }
+
+        /* Copy */
+        rurl[0] = '/';
+        (void)memcpy(rurl+1, str1, len1);
+        rurl[len1+1] = '\0';
+    }
+
+    return rurl;
+}
+
+/*
+ * Get data via HTTP
+ */
+int
+nb_http_get(const char *url, char **resstr, off_t *reslen)
+{
+    nb_parsed_url_t *purl;
+    int sock;
+    struct addrinfo hints, *res, *ressave;
+    char *port;
+    char *path;
+    int err;
+    char servhost[NI_MAXHOST];
+    char servservice[NI_MAXSERV];
+
+    nb_http_header_t *reqhdr;
+    char *reqhdrstr;
+    off_t reqhdrlen;
+    char *reqbdystr;
+    off_t reqbdylen;
+
+    char req[4096];
+    char buf[4096];
+    ssize_t nw;
+    ssize_t nr;
+    size_t tsize;
+    off_t clen;
+    struct timeval timeout;
+    double gtimeout = 60.0;
+
+
+    /* Parse the URL */
+    purl = nb_parse_url(url);
+    if ( NULL == purl ) {
+        return -1;
+    }
+    /* Only the scheme "http" is supported. */
+    if ( strcasecmp("http", purl->scheme) ) {
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    port = purl->port;
+    if ( NULL == port ) {
+        /* Set default port */
+        port = "80";
+    }
+
+    /* Open a socket */
+    bzero(&hints, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    err = getaddrinfo(purl->host, port, &hints, &res);
+    if ( 0 != err ) {
+        /* Error */
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Get first connection */
+    ressave = res;
+    sock = -1;
+    do {
+        sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if ( sock < 0 ) {
+            /* ignore a connection error. */
+            continue;
+        }
+        err = connect(sock, res->ai_addr, res->ai_addrlen);
+        if ( 0 != err ) {
+            /* Error */
+            (void)close(sock);
+            sock = -1;
+        } else {
+            /* Succeed */
+            break;
+        }
+    } while ( NULL != (res = res->ai_next) );
+
+    if ( sock < 0 ) {
+        /* No socket found */
+        freeaddrinfo(ressave);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Resolve the host and service */
+    err = getnameinfo(res->ai_addr, res->ai_addrlen, servhost, sizeof(servhost),
+                      servservice, sizeof(servservice),
+                      NI_NUMERICHOST | NI_NUMERICSERV);
+    if ( 0 != err ) {
+        /* Error */
+    }
+
+    /* Free */
+    freeaddrinfo(ressave);
+
+    /* Set timeout */
+    timeout.tv_sec = (time_t)gtimeout;
+    timeout.tv_usec = (suseconds_t)((gtimeout - (time_t)gtimeout) * 1000000);
+    if ( 0 != setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(struct timeval)) ) {
+        /* Error */
+        (void)close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Build and send a request */
+    path = _build_request_uri(purl);
+    if ( NULL ==  path ) {
+        /* Error */
+        (void)close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+    snprintf(req, sizeof(req), "GET %.1024s HTTP/1.1\r\n"
+             "Host: %.1024s\r\n"
+             "User-Agent: %s\r\n"
+             "Connection: close\r\n\r\n", path, purl->host, USER_AGENT);
+    free(path);
+
+    /* Send the header */
+    nw = send(sock, req, strlen(req), 0);
+    if ( nw != strlen(req) ) {
+        close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Read response header */
+    err = _read_response_header(sock, &reqhdrstr, &reqhdrlen, &reqbdystr,
+                                &reqbdylen);
+    if ( err < 0 ) {
+        /* Error */
+        close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Parse the response header */
+    reqhdr = nb_parse_http_header(reqhdrstr, (size_t)reqhdrlen);
+    if ( NULL == reqhdr ) {
+        /* Error */
+        free(reqhdrstr);
+        if ( NULL != reqbdystr ) {
+            free(reqbdystr);
+        }
+        close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Get content length */
+    clen = nb_http_header_get_content_length(reqhdr);
+
+    /* Allocate */
+    *reslen = clen;
+    if ( clen > 0 ) {
+        *resstr = malloc(sizeof(char) * (*reslen));
+        if ( NULL == *resstr ) {
+            nb_http_header_delete(reqhdr);
+            free(reqhdrstr);
+            if ( NULL != reqbdystr ) {
+                free(reqbdystr);
+            }
+            close(sock);
+            nb_parsed_url_free(purl);
+            return -1;
+        }
+    } else {
+        *resstr = NULL;
+    }
+    if ( reqbdylen > 0 && reqbdylen <= clen ) {
+        (void)memcpy(*resstr, reqbdystr, reqbdylen);
+        tsize = (size_t)reqbdylen;
+    }
+
+    /* Download the body */
+    while ( (nr = recv(sock, buf, sizeof(buf), 0)) > 0 ) {
+        (void)memcpy(*resstr + tsize, buf, nr);
+        tsize += nr;
+    }
+
+    nb_http_header_delete(reqhdr);
+    free(reqhdrstr);
+    if ( NULL != reqbdystr ) {
+        free(reqbdystr);
+    }
+    shutdown(sock, SHUT_RDWR);
+    close(sock);
+    nb_parsed_url_free(purl);
+
+    if ( tsize < clen ) {
+        if ( NULL != resstr ) {
+            free(resstr);
+        }
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * Post data via HTTP
+ */
+int
+nb_http_post(const char *url, const char *content_type, const char *data,
+             size_t sz, char **resstr, off_t *reslen)
+{
+    nb_parsed_url_t *purl;
+    int sock;
+    struct addrinfo hints, *res, *ressave;
+    char *port;
+    char *path;
+    int err;
+    char servhost[NI_MAXHOST];
+    char servservice[NI_MAXSERV];
+
+    nb_http_header_t *reqhdr;
+    char *reqhdrstr;
+    off_t reqhdrlen;
+    char *reqbdystr;
+    off_t reqbdylen;
+
+    char req[4096];
+    char buf[4096];
+    ssize_t nw;
+    ssize_t nr;
+    size_t tsize;
+    off_t clen;
+    struct timeval timeout;
+    double gtimeout = 60.0;
+
+    /* Parse the URL */
+    purl = nb_parse_url(url);
+    if ( NULL == purl ) {
+        return -1;
+    }
+    /* Only the scheme "http" is supported. */
+    if ( strcasecmp("http", purl->scheme) ) {
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    port = purl->port;
+    if ( NULL == port ) {
+        /* Set default port */
+        port = "80";
+    }
+
+    /* Open a socket */
+    bzero(&hints, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    err = getaddrinfo(purl->host, port, &hints, &res);
+    if ( 0 != err ) {
+        /* Error */
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Get first connection */
+    ressave = res;
+    sock = -1;
+    do {
+        sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if ( sock < 0 ) {
+            /* ignore a connection error. */
+            continue;
+        }
+        err = connect(sock, res->ai_addr, res->ai_addrlen);
+        if ( 0 != err ) {
+            /* Error */
+            (void)close(sock);
+            sock = -1;
+        } else {
+            /* Succeed */
+            break;
+        }
+    } while ( NULL != (res = res->ai_next) );
+
+    if ( sock < 0 ) {
+        /* No socket found */
+        freeaddrinfo(ressave);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Resolve the host and service */
+    err = getnameinfo(res->ai_addr, res->ai_addrlen, servhost, sizeof(servhost),
+                      servservice, sizeof(servservice),
+                      NI_NUMERICHOST | NI_NUMERICSERV);
+    if ( 0 != err ) {
+        /* Error */
+    }
+
+    /* Free */
+    freeaddrinfo(ressave);
+
+    /* Set timeout */
+    timeout.tv_sec = (time_t)gtimeout;
+    timeout.tv_usec = (suseconds_t)((gtimeout - (time_t)gtimeout) * 1000000);
+    if ( 0 != setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(struct timeval)) ) {
+        /* Error */
+        (void)close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Build and send a request */
+    path = _build_request_uri(purl);
+    if ( NULL ==  path ) {
+        /* Error */
+        (void)close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+    snprintf(req, sizeof(req), "POST %.1024s HTTP/1.1\r\n"
+             "Host: %.1024s\r\n"
+             "User-Agent: %s\r\n"
+             "Content-Type: %.1024s\r\n"
+             "Content-Length: %zu\r\n"
+             "Connection: close\r\n\r\n", path, purl->host, USER_AGENT,
+             content_type, sz);
+    free(path);
+
+    /* Send the header */
+    nw = send(sock, req, strlen(req), 0);
+    if ( nw != strlen(req) ) {
+        close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Upload the body */
+    ssize_t sent = 0;
+    while ( (nw = send(sock, data+sent, sz - sent, 0)) > 0 ) {
+        sent += nw;
+    }
+    if ( nw < 0 ) {
+        /* Error */
+        close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Read response header */
+    err = _read_response_header(sock, &reqhdrstr, &reqhdrlen, &reqbdystr,
+                                &reqbdylen);
+    if ( err < 0 ) {
+        /* Error */
+        close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Parse the response header */
+    reqhdr = nb_parse_http_header(reqhdrstr, (size_t)reqhdrlen);
+    if ( NULL == reqhdr ) {
+        /* Error */
+        free(reqhdrstr);
+        if ( NULL != reqbdystr ) {
+            free(reqbdystr);
+        }
+        close(sock);
+        nb_parsed_url_free(purl);
+        return -1;
+    }
+
+    /* Get content length */
+    clen = nb_http_header_get_content_length(reqhdr);
+
+    /* Allocate */
+    *reslen = clen;
+    if ( clen > 0 ) {
+        *resstr = malloc(sizeof(char) * (*reslen));
+        if ( NULL == *resstr ) {
+            nb_http_header_delete(reqhdr);
+            free(reqhdrstr);
+            if ( NULL != reqbdystr ) {
+                free(reqbdystr);
+            }
+            close(sock);
+            nb_parsed_url_free(purl);
+            return -1;
+        }
+    } else {
+        *resstr = NULL;
+    }
+    if ( reqbdylen > 0 && reqbdylen <= clen ) {
+        (void)memcpy(*resstr, reqbdystr, reqbdylen);
+        tsize = (size_t)reqbdylen;
+    }
+
+    /* Download the body */
+    while ( (nr = recv(sock, buf, sizeof(buf), 0)) > 0 ) {
+        (void)memcpy(*resstr + tsize, buf, nr);
+        tsize += nr;
+    }
+
+    nb_http_header_delete(reqhdr);
+    free(reqhdrstr);
+    if ( NULL != reqbdystr ) {
+        free(reqbdystr);
+    }
+    shutdown(sock, SHUT_RDWR);
+    close(sock);
+    nb_parsed_url_free(purl);
+
+    if ( tsize < clen ) {
+        if ( NULL != resstr ) {
+            free(resstr);
+        }
+        return -1;
+    }
+
+    return 0;
+}
+
 
 
 /*
