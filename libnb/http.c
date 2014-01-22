@@ -19,6 +19,8 @@
 #include <sys/time.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 
 #define HTTP_SOCKET_TIMEOUT             30.0
 #define RESULT_ITEMS_RESERVE_UNIT       4096
@@ -341,7 +343,6 @@ _build_request_uri(nb_parsed_url_t *purl)
     return rurl;
 }
 
-
 /*
  * Execute a file download via HTTP
  */
@@ -376,6 +377,8 @@ nb_http_get_exec(nb_http_get_t *obj, const char *url, int family,
     off_t rx;
     off_t clen;
     off_t tsize;
+    socklen_t optlen;
+    int opt;
 
     /* Allocate for the results */
     result = malloc(sizeof(nb_http_get_result_t));
@@ -419,6 +422,14 @@ nb_http_get_exec(nb_http_get_t *obj, const char *url, int family,
         free(result->items);
         free(result);
         return -1;
+    }
+    /* Get MSS */
+    optlen = sizeof(opt);
+    err = getsockopt(sock, IPPROTO_TCP, TCP_MAXSEG, &opt, &optlen);
+    if ( 0 == err ) {
+        result->mss = opt;
+    } else {
+        result->mss = -1;
     }
 
     /* Set timeout */
@@ -557,6 +568,456 @@ nb_http_get_exec(nb_http_get_t *obj, const char *url, int family,
         } else {
             result->items[result->cnt].tm = curtm;
             result->items[result->cnt].tx = tx;
+            result->items[result->cnt].rx = rx;
+            result->cnt++;
+        }
+
+        /* Report by calling a callback function */
+        if ( NULL != obj->cb ) {
+            if ( curtm - prevtm >= obj->cbfreq ) {
+                obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                prevtm = curtm;
+            }
+        }
+        if ( curtm - t0 > duration ) {
+            break;
+        }
+    }
+    if ( curtm != prevtm ) {
+        if ( NULL != obj->cb ) {
+            obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+        }
+    }
+
+    /* Completed time of the download */
+    t2 = prevtm;
+
+    /* Close the socket */
+    shutdown(sock, SHUT_RDWR);
+    (void)close(sock);
+
+    /* Update the result */
+    if ( NULL != obj->last_result ) {
+        free(obj->last_result->items);
+        free(obj->last_result);
+    }
+    obj->last_result = result;
+
+    return 0;
+}
+
+/*
+ * Execute a file upload via HTTP
+ */
+int
+nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
+                  off_t size, double duration)
+{
+    nb_parsed_url_t *purl;
+    nb_http_post_result_t *result;
+    nb_http_post_result_item_t *items;
+    size_t cntres;
+    int sock;
+    int err;
+    char *port;
+    char *path;
+    struct timeval tv;
+    char req[BUFFER_SIZE];
+    char buf[BUFFER_SIZE];
+    char *hdrstr;
+    off_t hdrlen;
+    char *bdystr;
+    off_t bdylen;
+    nb_http_header_t *hdr;
+    ssize_t nw;
+    ssize_t nr;
+    double t0;
+    double t1;
+    double t2;
+    double curtm;
+    double prevtm;
+    off_t tx;
+    off_t btx;
+    off_t rx;
+    off_t reshlen;
+    off_t resclen;
+    off_t tsize;
+    off_t rest;
+    socklen_t optlen;
+    int opt;
+    int prevopt;
+
+    /* Allocate for the results */
+    result = malloc(sizeof(nb_http_post_result_t));
+    if ( NULL == result ) {
+        return -1;
+    }
+    result->cnt = 0;
+    result->cntres = RESULT_ITEMS_RESERVE_UNIT;
+    result->items = malloc(sizeof(nb_http_post_result_item_t) * result->cntres);
+    if ( NULL == result->items ) {
+        free(result);
+        return -1;
+    }
+    result->hlen = 0;
+    result->clen = 0;
+
+    /* Parse the URL */
+    purl = nb_parse_url(url);
+    if ( NULL == purl ) {
+        free(result->items);
+        free(result);
+        return -1;
+    }
+    /* Only the scheme "http" is supported. */
+    if ( strcasecmp("http", purl->scheme) ) {
+        nb_parsed_url_free(purl);
+        free(result->items);
+        free(result);
+        return -1;
+    }
+    port = purl->port;
+    if ( NULL == port ) {
+        /* Set default port */
+        port = "80";
+    }
+
+    /* Open a socket */
+    sock = _open_stream_socket(purl->host, port, family);
+    if ( sock < 0 ) {
+        nb_parsed_url_free(purl);
+        free(result->items);
+        free(result);
+        return -1;
+    }
+    /* Get MSS */
+    optlen = sizeof(opt);
+    err = getsockopt(sock, IPPROTO_TCP, TCP_MAXSEG, &opt, &optlen);
+    if ( 0 == err ) {
+        result->mss = opt;
+    } else {
+        result->mss = -1;
+    }
+
+    /* Set timeout */
+    tv.tv_sec = (time_t)HTTP_SOCKET_TIMEOUT;
+    tv.tv_usec = (suseconds_t)((HTTP_SOCKET_TIMEOUT
+                                - (time_t)HTTP_SOCKET_TIMEOUT) * 1000000);
+    if ( 0 != setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv,
+                         sizeof(struct timeval)) ) {
+        /* Error */
+        (void)close(sock);
+        nb_parsed_url_free(purl);
+        free(result->items);
+        free(result);
+        return -1;
+    }
+
+    /* Prepare the body */
+    for ( nr = 0; nr < sizeof(buf); nr++ ) {
+        buf[nr] = nr % 0x100;
+    }
+
+    /* Initialize the variables for saving statistics */
+    tx = 0;
+    btx = 0;
+    rx = 0;
+
+    /* Build and send a request */
+    path = _build_request_uri(purl);
+    if ( NULL ==  path ) {
+        /* Error */
+        (void)close(sock);
+        nb_parsed_url_free(purl);
+        free(result->items);
+        free(result);
+        return -1;
+    }
+    snprintf(req, sizeof(req), "POST %.1024s HTTP/1.1\r\n"
+             "Host: %.1024s\r\n"
+             "User-Agent: %s\r\n"
+             "Content-Length: %llu\r\n"
+             "X-Measurement-Id: %.100s\r\n"
+             "Connection: close\r\n\r\n", path, purl->host, USER_AGENT, size,
+             obj->mid);
+    free(path);
+
+    /* Free the parsed url */
+    nb_parsed_url_free(purl);
+
+    /* Obtain the current time */
+    t0 = nb_microtime();
+    /* For result */
+    result->items[result->cnt].tm = t0;
+    result->items[result->cnt].tx = tx;
+    result->items[result->cnt].btx = btx;
+    result->items[result->cnt].rx = rx;
+    result->cnt++;
+
+    /* Send request header */
+    nw = send(sock, req, strlen(req), 0);
+    if ( nw != strlen(req) ) {
+        close(sock);
+        free(result->items);
+        free(result);
+        return -1;
+    }
+    btx += nw;
+
+    /* Get the current time */
+    t1 = nb_microtime();
+
+    /* Get the buffered size */
+    optlen = sizeof(opt);
+    if ( 0 == getsockopt(sock, SOL_SOCKET, SO_NWRITE, &opt, &optlen) ) {
+        tx = btx - opt;
+    } else {
+        tx = 0;
+    }
+
+    /* Set result */
+    result->hlen = strlen(req);
+    result->clen = size;
+    /* Append a result item */
+    result->items[result->cnt].tm = t1;
+    result->items[result->cnt].btx = btx;
+    result->items[result->cnt].tx = tx;
+    result->items[result->cnt].rx = rx;
+    result->cnt++;
+
+    /* Call a callback function */
+    if ( NULL != obj->cb ) {
+        obj->cb(obj, result->hlen, result->clen, t0, t1, tx, rx);
+    }
+
+    /* Upload the body */
+    prevtm = t1;
+    rest = size;
+    while ( (nw = send(sock, buf, rest > sizeof(buf) ? sizeof(buf) : rest,
+                       0)) > 0 ) {
+        curtm = nb_microtime();
+
+        /* Update the information */
+        rest -= nw;
+        btx += nw;
+
+        /* Get the buffered size */
+        optlen = sizeof(opt);
+        if ( 0 == getsockopt(sock, SOL_SOCKET, SO_NWRITE, &opt, &optlen) ) {
+            tx = btx - opt;
+        } else {
+            tx = 0;
+        }
+
+        /* Append a result item */
+        if ( result->cnt >= result->cntres ) {
+            /* Realloc */
+            cntres = result->cntres + RESULT_ITEMS_RESERVE_UNIT;
+            items = realloc(result->items,
+                            sizeof(nb_http_post_result_item_t) * cntres);
+            if ( NULL != items ) {
+                result->items = items;
+                result->cntres = cntres;
+                result->items[result->cnt].tm = curtm;
+                result->items[result->cnt].btx = btx;
+                result->items[result->cnt].tx = tx;
+                result->items[result->cnt].rx = rx;
+                result->cnt++;
+            }
+        } else {
+            result->items[result->cnt].tm = curtm;
+            result->items[result->cnt].btx = btx;
+            result->items[result->cnt].tx = tx;
+            result->items[result->cnt].rx = rx;
+            result->cnt++;
+        }
+
+        /* Report by calling a callback function */
+        if ( NULL != obj->cb ) {
+            if ( curtm - prevtm >= obj->cbfreq ) {
+                obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                prevtm = curtm;
+            }
+        }
+
+        if ( curtm - t0 > duration ) {
+            /* End-of-measurement */
+            if ( curtm != prevtm ) {
+                if ( NULL != obj->cb ) {
+                    obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                }
+            }
+
+            /* Close the socket */
+            shutdown(sock, SHUT_RDWR);
+            (void)close(sock);
+
+            /* Set the result */
+            if ( NULL != obj->last_result ) {
+                free(obj->last_result->items);
+                free(obj->last_result);
+            }
+            obj->last_result = result;
+
+            return 0;
+        }
+    }
+
+    /* Wait for sending out the buffered data */
+    prevopt = 0;
+    for ( ;; ) {
+        curtm = nb_microtime();
+
+        /* Get the buffered size */
+        optlen = sizeof(opt);
+        if ( 0 == getsockopt(sock, SOL_SOCKET, SO_NWRITE, &opt, &optlen) ) {
+            tx = btx - opt;
+        } else {
+            tx = 0;
+            break;
+        }
+
+        if ( prevopt != opt ) {
+            /* Append a result item */
+            if ( result->cnt >= result->cntres ) {
+                cntres = result->cntres + RESULT_ITEMS_RESERVE_UNIT;
+                items = realloc(result->items,
+                                sizeof(nb_http_post_result_item_t) * cntres);
+                if ( NULL != items ) {
+                    result->items = items;
+                    result->cntres = cntres;
+                    result->items[result->cnt].tm = curtm;
+                    result->items[result->cnt].btx = btx;
+                    result->items[result->cnt].tx = tx;
+                    result->items[result->cnt].rx = rx;
+                    result->cnt++;
+                }
+            } else {
+                result->items[result->cnt].tm = curtm;
+                result->items[result->cnt].btx = btx;
+                result->items[result->cnt].tx = tx;
+                result->items[result->cnt].rx = rx;
+                result->cnt++;
+            }
+
+            /* Report by calling a callback function */
+            if ( NULL != obj->cb ) {
+                if ( curtm - prevtm >= obj->cbfreq ) {
+                    obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                    prevtm = curtm;
+                }            }
+
+        }
+        if ( opt <= 0 ) {
+            /* Buffer becomes empty */
+            break;
+        } else if ( curtm - t0 > duration ) {
+            /* End-of-measurement */
+            if ( curtm != prevtm ) {
+                if ( NULL != obj->cb ) {
+                    obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                }
+            }
+
+            /* Close the socket */
+            shutdown(sock, SHUT_RDWR);
+            (void)close(sock);
+
+            /* Set the result */
+            if ( NULL != obj->last_result ) {
+                free(obj->last_result->items);
+                free(obj->last_result);
+            }
+            obj->last_result = result;
+
+            return 0;
+        }
+        prevopt = opt;
+        usleep(UPLOAD_WAIT_USLEEP);
+    }
+
+    /* Read the response header */
+    err = _read_response_header(sock, &hdrstr, &hdrlen, &bdystr, &bdylen);
+    if ( err < 0 ) {
+        /* Error */
+        close(sock);
+        free(result->items);
+        free(result);
+        return -1;
+    }
+    t1 = nb_microtime();
+    rx += hdrlen + bdylen;
+
+    /* Parse the response header */
+    hdr = nb_parse_http_header(hdrstr, (size_t)hdrlen);
+    if ( NULL == hdr ) {
+        /* Error */
+        free(hdrstr);
+        if ( NULL != bdystr ) {
+            free(bdystr);
+        }
+        close(sock);
+        free(result->items);
+        free(result);
+        return -1;
+    }
+    /* Free the response */
+    free(hdrstr);
+    if ( NULL != bdystr ) {
+        free(bdystr);
+    }
+
+    /* Response header length */
+    reshlen = hdrlen;
+
+    /* Get content length */
+    resclen = nb_http_header_get_content_length(hdr);
+
+    /* Free the HTTP header */
+    nb_http_header_delete(hdr);
+
+    /* For result */
+    result->items[result->cnt].tm = t1;
+    result->items[result->cnt].tx = tx;
+    result->items[result->cnt].rx = rx;
+    result->cnt++;
+
+    /* Call a callback function */
+    if ( NULL != obj->cb ) {
+        obj->cb(obj, result->hlen, result->clen, t0, t1, tx, rx);
+    }
+
+    /* Set read length */
+    tsize = bdylen;
+
+    /* Download the body */
+    prevtm = t1;
+    while ( (nr = recv(sock, buf, sizeof(buf), 0)) > 0 ) {
+        curtm = nb_microtime();
+
+        /* Update the information */
+        tsize += nr;
+        rx += nr;
+
+        /* Insert a result item */
+        if ( result->cnt >= result->cntres ) {
+            /* Realloc */
+            cntres = result->cntres + RESULT_ITEMS_RESERVE_UNIT;
+            items = realloc(result->items,
+                            sizeof(nb_http_get_result_item_t) * cntres);
+            if ( NULL != items ) {
+                result->items = items;
+                result->cntres = cntres;
+                result->items[result->cnt].tm = curtm;
+                result->items[result->cnt].tx = tx;
+                result->items[result->cnt].btx = btx;
+                result->items[result->cnt].rx = rx;
+                result->cnt++;
+            }
+        } else {
+            result->items[result->cnt].tm = curtm;
+            result->items[result->cnt].tx = tx;
+            result->items[result->cnt].btx = btx;
             result->items[result->cnt].rx = rx;
             result->cnt++;
         }

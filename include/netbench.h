@@ -84,6 +84,7 @@ typedef struct _http_get_result {
     nb_http_get_result_item_t *items;
     size_t hlen;
     size_t clen;
+    int mss;
 } nb_http_get_result_t;
 typedef struct _http_get nb_http_get_t;
 typedef void (*nb_http_get_cb_f)(nb_http_get_t *, off_t, off_t, double, double,
@@ -112,10 +113,11 @@ typedef struct _http_post_result {
     nb_http_post_result_item_t *items;
     size_t hlen;
     size_t clen;
+    int mss;
 } nb_http_post_result_t;
 typedef struct _http_post nb_http_post_t;
-typedef void (*nb_http_post_cb_f)(nb_http_post_t *, size_t, size_t, double,
-                                  size_t, double);
+typedef void (*nb_http_post_cb_f)(nb_http_post_t *, off_t, off_t, double,
+                                  double, off_t, off_t);
 struct _http_post {
     nb_http_post_cb_f cb;
     double cbfreq;
@@ -203,7 +205,7 @@ extern "C" {
     int
     nb_http_post_set_callback(nb_http_post_t *, nb_http_post_cb_f, double,
                               void *);
-    int nb_http_post_exec(nb_http_post_t *, const char *, int, size_t, double);
+    int nb_http_post_exec(nb_http_post_t *, const char *, int, off_t, double);
     void nb_http_post_delete(nb_http_post_t *);
 
 

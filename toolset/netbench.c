@@ -37,6 +37,13 @@ cb_hget(nb_http_get_t *hget, off_t hlen, off_t clen, double t0, double cur,
     printf("Downloaded %.2lf %% (%.2lf sec)\n", 100.0 * rx / (hlen + clen),
            cur - t0);
 }
+void
+cb_hpost(nb_http_post_t *hpost, off_t hlen, off_t clen, double t0, double cur,
+         off_t tx, off_t rx)
+{
+    printf("Uploaded %.2lf %% (%.2lf sec)\n", 100.0 * tx / (hlen + clen),
+           cur - t0);
+}
 
 int
 main(int argc, const char *const argv[])
@@ -45,6 +52,7 @@ main(int argc, const char *const argv[])
     nb_ping_t *ping;
     nb_traceroute_t *tr;
     nb_http_get_t *hget;
+    nb_http_post_t *hpost;
 
     /* Prepare the ping measurement (IPv40 */
     printf("Starting ping (IPv4)...\n");
@@ -152,6 +160,38 @@ main(int argc, const char *const argv[])
 
     nb_http_get_delete(hget);
     printf("Finishied HTTP download.\n");
+
+
+    /* Prepare the HTTP (POST) measurement */
+    printf("Starting HTTP upload ...\n");
+    hpost = nb_http_post_new("TESTID");
+    if ( NULL == hpost ) {
+        /* Cannot create HTTP (POST) measurement instance */
+        fprintf(stderr, "Cannot prepare HTTP (POST) measurement.\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Set a callback function */
+    (void)nb_http_post_set_callback(hpost, cb_hpost, 0.5, NULL);
+
+    /* Execute HTTP upload (IPv4) */
+    ret = nb_http_post_exec(hpost, "http://netsurvey.jar.jp/scr/upload.php",
+                            AF_INET, 100 * 1000 * 1000, 5.0);
+    if ( 0 != ret ) {
+        /* Cannot execute the HTTP (POST) measurement */
+        fprintf(stderr, "Cannot execute HTTP (POST) measurement (IPv4).\n");
+    }
+
+    /* Execute HTTP upload (IPv6) */
+    ret = nb_http_post_exec(hpost, "http://netsurvey.jar.jp/scr/upload.php",
+                            AF_INET6, 10 * 1000 * 1000, 5.0);
+    if ( 0 != ret ) {
+        /* Cannot execute the HTTP (POST) measurement */
+        fprintf(stderr, "Cannot execute HTTP (POST) measurement (IPv6).\n");
+    }
+
+    nb_http_post_delete(hpost);
+    printf("Finishied HTTP upload.\n");
 
     return 0;
 }
