@@ -30,6 +30,13 @@ cb_traceroute(nb_traceroute_t *tr, int ttl,
     }
     printf("%d: %s %lf ms\n", ttl, tmphost, rtt * 1000);
 }
+void
+cb_hget(nb_http_get_t *hget, off_t hlen, off_t clen, double t0, double cur,
+        off_t tx, off_t rx)
+{
+    printf("Downloaded %.2lf %% (%.2lf sec)\n", 100.0 * rx / (hlen + clen),
+           cur - t0);
+}
 
 int
 main(int argc, const char *const argv[])
@@ -37,6 +44,7 @@ main(int argc, const char *const argv[])
     int ret;
     nb_ping_t *ping;
     nb_traceroute_t *tr;
+    nb_http_get_t *hget;
 
     /* Prepare the ping measurement (IPv40 */
     printf("Starting ping (IPv4)...\n");
@@ -55,7 +63,6 @@ main(int argc, const char *const argv[])
     if ( 0 != ret ) {
         /* Cannot execute the ping measurement */
         fprintf(stderr, "Cannot execute ping measurement.\n");
-        return EXIT_FAILURE;
     }
 
     nb_ping_close(ping);
@@ -79,14 +86,13 @@ main(int argc, const char *const argv[])
     if ( 0 != ret ) {
         /* Cannot execute the ping measurement */
         fprintf(stderr, "Cannot execute ping measurement.\n");
-        return EXIT_FAILURE;
     }
 
     nb_ping_close(ping);
     printf("Finishied ping (IPv6).\n");
 
 
-    /* Prepare the traceroute measurement (IPv6) */
+    /* Prepare the traceroute measurement */
     printf("Starting traceroute...\n");
     tr = nb_traceroute_new();
     if ( NULL == tr ) {
@@ -103,7 +109,6 @@ main(int argc, const char *const argv[])
     if ( 0 != ret ) {
         /* Cannot execute the traceroute measurement */
         fprintf(stderr, "Cannot execute traceroute measurement (IPv4).\n");
-        return EXIT_FAILURE;
     }
 
     /* Execute traceroute (IPv6) */
@@ -111,11 +116,42 @@ main(int argc, const char *const argv[])
     if ( 0 != ret ) {
         /* Cannot execute the traceroute measurement */
         fprintf(stderr, "Cannot execute traceroute measurement (IPv6).\n");
-        return EXIT_FAILURE;
     }
 
     nb_traceroute_delete(tr);
     printf("Finishied traceroute.\n");
+
+
+    /* Prepare the HTTP (GET) measurement */
+    printf("Starting HTTP download ...\n");
+    hget = nb_http_get_new("TESTID");
+    if ( NULL == hget ) {
+        /* Cannot create HTTP (GET) measurement instance */
+        fprintf(stderr, "Cannot prepare HTTP (GET) measurement.\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Set a callback function */
+    (void)nb_http_get_set_callback(hget, cb_hget, 0.5, NULL);
+
+    /* Execute HTTP download (IPv4) */
+    ret = nb_http_get_exec(hget, "http://netsurvey.jar.jp/scr/download.php",
+                           AF_INET, 5.0);
+    if ( 0 != ret ) {
+        /* Cannot execute the HTTP (GET) measurement */
+        fprintf(stderr, "Cannot execute HTTP (GET) measurement (IPv4).\n");
+    }
+
+    /* Execute HTTP download (IPv6) */
+    ret = nb_http_get_exec(hget, "http://netsurvey.jar.jp/scr/download.php",
+                           AF_INET6, 5.0);
+    if ( 0 != ret ) {
+        /* Cannot execute the HTTP (GET) measurement */
+        fprintf(stderr, "Cannot execute HTTP (GET) measurement (IPv6).\n");
+    }
+
+    nb_http_get_delete(hget);
+    printf("Finishied HTTP download.\n");
 
     return 0;
 }
