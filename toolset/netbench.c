@@ -26,7 +26,7 @@ main(int argc, const char *const argv[])
 
     t0 = nb_microtime();
 
-    /* Prepare the ping measurement */
+    /* Prepare the ping measurement (IPv40 */
     ping = nb_ping_open(AF_INET);
     if ( NULL == ping ) {
         /* Cannot open ping socket */
@@ -50,7 +50,7 @@ main(int argc, const char *const argv[])
     t1 = nb_microtime();
 
 
-    /* Prepare the ping measurement */
+    /* Prepare the ping measurement (IPv6) */
     ping = nb_ping_open(AF_INET6);
     if ( NULL == ping ) {
         /* Cannot open ping socket */
