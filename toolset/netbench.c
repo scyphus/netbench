@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+void
+cb_ping(nb_ping_t *ping, int seq, double rtt)
+{
+    printf("RTT = %lf ms (Seq = #%d)\n", rtt * 1000, seq);
+}
+
 int
 main(int argc, const char *const argv[])
 {
@@ -28,7 +34,11 @@ main(int argc, const char *const argv[])
         return EXIT_FAILURE;
     }
 
-    ret = nb_ping_exec(ping, "157.82.3.4", 12, 10, 1.0, 3.0);
+    /* Set a callback function */
+    (void)nb_ping_set_callback(ping, cb_ping, NULL);
+
+    /* Execute ping */
+    ret = nb_ping_exec(ping, "netsurvey.jar.jp", 12, 10, 1.0, 3.0);
     if ( 0 != ret ) {
         /* Cannot execute the ping measurement */
         fprintf(stderr, "Cannot execute ping measurement.\n");
@@ -38,6 +48,28 @@ main(int argc, const char *const argv[])
     nb_ping_close(ping);
 
     t1 = nb_microtime();
+
+
+    /* Prepare the ping measurement */
+    ping = nb_ping_open(AF_INET6);
+    if ( NULL == ping ) {
+        /* Cannot open ping socket */
+        fprintf(stderr, "Cannot prepare ping measurement.\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Set a callback function */
+    (void)nb_ping_set_callback(ping, cb_ping, NULL);
+
+    /* Execute ping */
+    ret = nb_ping_exec(ping, "netsurvey.jar.jp", 2, 10, 1.0, 3.0);
+    if ( 0 != ret ) {
+        /* Cannot execute the ping measurement */
+        fprintf(stderr, "Cannot execute ping measurement.\n");
+        return EXIT_FAILURE;
+    }
+
+    nb_ping_close(ping);
 
 
     return 0;

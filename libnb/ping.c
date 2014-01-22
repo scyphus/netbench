@@ -77,12 +77,27 @@ _ping_send(nb_ping_t *obj, struct addrinfo *dai, uint16_t ident, uint16_t seq,
     }
 
     /* Build an ICMP packet */
-    icmp = (struct icmp_hdr *)buf;
-    icmp->type = ICMP_TYPE_ECHO_REQUEST;
-    icmp->code = 0;
-    icmp->checksum = 0;
-    icmp->ident = htons(ident);
-    icmp->seq = htons(seq);
+    switch ( obj->family ) {
+    case AF_INET:
+        icmp = (struct icmp_hdr *)buf;
+        icmp->type = ICMP_TYPE_ECHO_REQUEST;
+        icmp->code = 0;
+        icmp->checksum = 0;
+        icmp->ident = htons(ident);
+        icmp->seq = htons(seq);
+        break;
+    case AF_INET6:
+        icmp = (struct icmp_hdr *)buf;
+        icmp->type = ICMPV6_TYPE_ECHO_REQUEST;
+        icmp->code = 0;
+        icmp->checksum = 0;
+        icmp->ident = htons(ident);
+        icmp->seq = htons(seq);
+        break;
+    default:
+        return -1;
+    }
+
 
     /* Fill with values */
     for ( i = sizeof(struct icmp_hdr); i < pktsize; i++ ) {
@@ -137,40 +152,62 @@ _ping_recv(nb_ping_t *obj, struct addrinfo *dai, uint16_t *seq, double *tm,
              != sin4->sin_addr.s_addr ) {
             return -1;
         }
+
+        /* Check it */
+        if ( nr < sizeof(struct ip_hdr) ) {
+            return -1;
+        }
+
+        /* IP header */
+        rip = (struct ip_hdr *)buf;
+        iphdrlen = rip->verlen & 0xf;
+        if ( nr < 4 * iphdrlen + sizeof(struct icmp_hdr) ) {
+            return -1;
+        }
+        /* Skip IP header */
+        ricmp = (struct icmp_hdr *)(buf + 4 * iphdrlen);
+        if ( ICMP_TYPE_ECHO_REPLY != ricmp->type || 0 != ricmp->code ) {
+            /* Error */
+            return -1;
+        }
+        *seq = ntohs(ricmp->seq);
+        if ( *seq >= res->cnt ) {
+            /* Invalid sequence */
+            return -1;
+        }
+        if ( ntohs(ricmp->ident) != res->items[*seq].ident ) {
+            /* Invalid identifier */
+            return -1;
+        }
+
     } else if ( AF_INET6 == dai->ai_family ) {
         sin6 = (struct sockaddr_in6 *)dai->ai_addr;
         if ( 0 != memcmp(((struct sockaddr_in6 *)&saddr)->sin6_addr.s6_addr,
                          sin6->sin6_addr.s6_addr,
                          sizeof(sin6->sin6_addr.s6_addr)) ) {
         }
+
+        /* Check it */
+        if ( nr < sizeof(struct icmp_hdr) ) {
+            return -1;
+        }
+
+        /* ICMPv6 */
+        ricmp = (struct icmp_hdr *)buf;
+        if ( ICMPV6_TYPE_ECHO_REPLY != ricmp->type || 0 != ricmp->code ) {
+            /* Error */
+            return -1;
+        }
+        *seq = ntohs(ricmp->seq);
+        if ( *seq >= res->cnt ) {
+            /* Invalid sequence */
+            return -1;
+        }
+        if ( ntohs(ricmp->ident) != res->items[*seq].ident ) {
+            /* Invalid identifier */
+            return -1;
+        }
     } else {
-        return -1;
-    }
-
-    /* Check it */
-    if ( nr < sizeof(struct ip_hdr) ) {
-        return -1;
-    }
-
-    /* IP header */
-    rip = (struct ip_hdr *)buf;
-    iphdrlen = rip->verlen & 0xf;
-    if ( nr < 4 * iphdrlen + sizeof(struct icmp_hdr) ) {
-        return -1;
-    }
-    /* Skip IP header */
-    ricmp = (struct icmp_hdr *)(buf + 4 * iphdrlen);
-    if ( ICMP_TYPE_ECHO_REPLY != ricmp->type || 0 != ricmp->code ) {
-        /* Error */
-        return -1;
-    }
-    *seq = ntohs(ricmp->seq);
-    if ( *seq >= res->cnt ) {
-        /* Invalid sequence */
-        return -1;
-    }
-    if ( ntohs(ricmp->ident) != res->items[*seq].ident ) {
-        /* Invalid identifier */
         return -1;
     }
 
@@ -333,13 +370,14 @@ nb_ping_exec(nb_ping_t *obj, const char *target, size_t sz, int n,
 
         /* Calculate the timeout for polling */
         if ( nsent < n ) {
-            /* Check the timeout to the next */
+            /* Check the timeout to the next packet */
             gto = interval * nsent - (t1 - t0);
             if ( gto <= 0.0 ) {
                 /* Send again */
                 continue;
             }
         } else {
+            /* Check the timeout to the end of the measurement */
             gto = interval * nsent - (t1 - t0) + timeout;
             if ( gto <= 0.0 ) {
                 gto = 0.0;
@@ -382,9 +420,12 @@ nb_ping_exec(nb_ping_t *obj, const char *target, size_t sz, int n,
                         continue;
                     }
 
+                    /* Call the callback function */
                     if ( NULL != obj->cb ) {
                         obj->cb(obj, seq, tm - res->items[seq].sent);
                     }
+
+                    /* Set results */
                     res->items[seq].stat++;
                     res->items[seq].recv = tm;
                     nrecv++;
