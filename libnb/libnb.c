@@ -1,12 +1,12 @@
 /*_
- * Copyright 2013 Scyphus Solutions Co. Ltd.  All rights reserved.
+ * Copyright 2013-2014 Scyphus Solutions Co. Ltd.  All rights reserved.
  *
  * Authors:
  *      Hirochika Asai  <asai@scyphus.co.jp>
  */
 
 #include "netbench_private.h"
-#include <netbench.h>
+#include "netbench.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

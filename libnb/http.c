@@ -186,6 +186,8 @@ _open_stream_socket(const char *host, const char *service, int family)
         return -1;
     }
 
+    freeaddrinfo(ressave);
+
     return sock;
 }
 
@@ -793,7 +795,8 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
     /* Upload the body */
     prevtm = t1;
     rest = size;
-    while ( (nw = send(sock, buf, rest > sizeof(buf) ? sizeof(buf) : rest,
+    while ( (nw = send(sock, buf,
+                       rest > sizeof(buf) ? sizeof(buf) : (size_t)rest,
                        0)) > 0 ) {
         curtm = nb_microtime();
 

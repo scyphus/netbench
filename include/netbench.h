@@ -82,8 +82,8 @@ typedef struct _http_get_result {
     size_t cnt;
     size_t cntres;
     nb_http_get_result_item_t *items;
-    size_t hlen;
-    size_t clen;
+    off_t hlen;
+    off_t clen;
     int mss;
 } nb_http_get_result_t;
 typedef struct _http_get nb_http_get_t;
@@ -103,16 +103,16 @@ struct _http_get {
  */
 typedef struct _http_post_result_item {
     double tm;
-    size_t tx;
-    size_t rx;
-    size_t btx;                 /* Buffered TX */
+    off_t tx;
+    off_t rx;
+    off_t btx;                 /* Buffered TX */
 } nb_http_post_result_item_t;
 typedef struct _http_post_result {
     size_t cnt;
     size_t cntres;
     nb_http_post_result_item_t *items;
-    size_t hlen;
-    size_t clen;
+    off_t hlen;
+    off_t clen;
     int mss;
 } nb_http_post_result_t;
 typedef struct _http_post nb_http_post_t;
