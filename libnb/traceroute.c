@@ -112,6 +112,7 @@ _icmp6_recv(int sock, struct sockaddr_storage *saddr, socklen_t *saddrlen,
     uint8_t buf[BUFFER_SIZE];
     ssize_t nr;
 
+    *saddrlen = sizeof(struct sockaddr_storage);
     nr = recvfrom(sock, buf, BUFFER_SIZE, 0, (struct sockaddr *)saddr,
                   saddrlen);
     *t0 = nb_microtime();
@@ -164,9 +165,17 @@ nb_traceroute_exec(nb_traceroute_t *obj, const char *target, int family,
 
     /* Open an ICMP socket */
     if ( AF_INET == family ) {
+#if TARGET_FREEBSD || TARGET_NETBSD || TARGET_LINUX
+        icmpsock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+#else
         icmpsock = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+#endif
     } else if ( AF_INET6 == family ) {
+#if TARGET_FREEBSD || TARGET_NETBSD || TARGET_LINUX
+        icmpsock = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+#else
         icmpsock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_ICMPV6);
+#endif
     } else {
         return -1;
     }
