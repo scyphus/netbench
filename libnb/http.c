@@ -26,6 +26,7 @@
 #define RESULT_ITEMS_RESERVE_UNIT       4096
 #define UPLOAD_WAIT_USLEEP              1000
 #define BUFFER_SIZE                     65536
+#define DEFAULT_MSS_SIZE                1500
 
 
 /*
@@ -648,6 +649,7 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
     socklen_t optlen;
     int opt;
     int prevopt;
+    int segsize;
 
     /* Allocate for the results */
     result = malloc(sizeof(nb_http_post_result_t));
@@ -697,8 +699,10 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
     err = getsockopt(sock, IPPROTO_TCP, TCP_MAXSEG, &opt, &optlen);
     if ( 0 == err ) {
         result->mss = opt;
+        segsize = opt;
     } else {
         result->mss = -1;
+        segsize = DEFAULT_MSS_SIZE;
     }
 
     /* Set timeout */
@@ -771,11 +775,15 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
 
     /* Get the buffered size */
     optlen = sizeof(opt);
+#ifdef SO_NWRITE
     if ( 0 == getsockopt(sock, SOL_SOCKET, SO_NWRITE, &opt, &optlen) ) {
         tx = btx - opt;
     } else {
         tx = 0;
     }
+#else
+    tx = 0;
+#endif
 
     /* Set result */
     result->hlen = strlen(req);
@@ -796,7 +804,7 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
     prevtm = t1;
     rest = size;
     while ( (nw = send(sock, buf,
-                       rest > sizeof(buf) ? sizeof(buf) : (size_t)rest,
+                       rest > segsize ? segsize : (size_t)rest,
                        0)) > 0 ) {
         curtm = nb_microtime();
 
@@ -806,11 +814,15 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
 
         /* Get the buffered size */
         optlen = sizeof(opt);
+#ifdef SO_NWRITE
         if ( 0 == getsockopt(sock, SOL_SOCKET, SO_NWRITE, &opt, &optlen) ) {
             tx = btx - opt;
         } else {
             tx = 0;
         }
+#else
+        tx = 0;
+#endif
 
         /* Append a result item */
         if ( result->cnt >= result->cntres ) {
@@ -873,12 +885,15 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
 
         /* Get the buffered size */
         optlen = sizeof(opt);
+#ifdef SO_NWRITE
         if ( 0 == getsockopt(sock, SOL_SOCKET, SO_NWRITE, &opt, &optlen) ) {
             tx = btx - opt;
         } else {
             tx = 0;
-            break;
         }
+#else
+        tx = 0;
+#endif
 
         if ( prevopt != opt ) {
             /* Append a result item */
