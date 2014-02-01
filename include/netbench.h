@@ -117,7 +117,7 @@ typedef struct _http_post_result {
 } nb_http_post_result_t;
 typedef struct _http_post nb_http_post_t;
 typedef void (*nb_http_post_cb_f)(nb_http_post_t *, off_t, off_t, double,
-                                  double, off_t, off_t);
+                                  double, off_t, off_t, off_t);
 struct _http_post {
     nb_http_post_cb_f cb;
     double cbfreq;

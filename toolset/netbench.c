@@ -10,6 +10,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define API_SERVER "api.nb14.jar.jp"
+#define IPV4_SERVER "v4.nb14.jar.jp"
+#define IPV6_SERVER "v6.nb14.jar.jp"
+
 void
 cb_ping(nb_ping_t *ping, int seq, double rtt)
 {
@@ -39,9 +43,9 @@ cb_hget(nb_http_get_t *hget, off_t hlen, off_t clen, double t0, double cur,
 }
 void
 cb_hpost(nb_http_post_t *hpost, off_t hlen, off_t clen, double t0, double cur,
-         off_t tx, off_t rx)
+         off_t btx, off_t tx, off_t rx)
 {
-    printf("Uploaded %.2lf %% (%.2lf sec)\n", 100.0 * tx / (hlen + clen),
+    printf("Uploaded %.2lf %% (%.2lf sec)\n", 100.0 * btx / (hlen + clen),
            cur - t0);
 }
 
@@ -67,7 +71,7 @@ main(int argc, const char *const argv[])
     (void)nb_ping_set_callback(ping, cb_ping, NULL);
 
     /* Execute ping */
-    ret = nb_ping_exec(ping, "netsurvey.jar.jp", 12, 10, 1.0, 3.0);
+    ret = nb_ping_exec(ping, IPV4_SERVER, 12, 10, 1.0, 3.0);
     if ( 0 != ret ) {
         /* Cannot execute the ping measurement */
         fprintf(stderr, "Cannot execute ping measurement.\n");
@@ -90,7 +94,7 @@ main(int argc, const char *const argv[])
     (void)nb_ping_set_callback(ping, cb_ping, NULL);
 
     /* Execute ping */
-    ret = nb_ping_exec(ping, "netsurvey.jar.jp", 2, 10, 1.0, 3.0);
+    ret = nb_ping_exec(ping, IPV6_SERVER, 2, 10, 1.0, 3.0);
     if ( 0 != ret ) {
         /* Cannot execute the ping measurement */
         fprintf(stderr, "Cannot execute ping measurement.\n");
@@ -113,14 +117,14 @@ main(int argc, const char *const argv[])
     (void)nb_traceroute_set_callback(tr, cb_traceroute, NULL);
 
     /* Execute traceroute (IPv4) */
-    ret = nb_traceroute_exec(tr, "netsurvey.jar.jp", AF_INET, 32, 5.0);
+    ret = nb_traceroute_exec(tr, IPV4_SERVER, AF_INET, 32, 5.0);
     if ( 0 != ret ) {
         /* Cannot execute the traceroute measurement */
         fprintf(stderr, "Cannot execute traceroute measurement (IPv4).\n");
     }
 
     /* Execute traceroute (IPv6) */
-    ret = nb_traceroute_exec(tr, "netsurvey.jar.jp", AF_INET6, 32, 5.0);
+    ret = nb_traceroute_exec(tr, IPV6_SERVER, AF_INET6, 32, 5.0);
     if ( 0 != ret ) {
         /* Cannot execute the traceroute measurement */
         fprintf(stderr, "Cannot execute traceroute measurement (IPv6).\n");
@@ -143,7 +147,7 @@ main(int argc, const char *const argv[])
     (void)nb_http_get_set_callback(hget, cb_hget, 0.5, NULL);
 
     /* Execute HTTP download (IPv4) */
-    ret = nb_http_get_exec(hget, "http://netsurvey.jar.jp/scr/download.php",
+    ret = nb_http_get_exec(hget, "http://"IPV4_SERVER"/scr/download.php",
                            AF_INET, 5.0);
     if ( 0 != ret ) {
         /* Cannot execute the HTTP (GET) measurement */
@@ -151,7 +155,7 @@ main(int argc, const char *const argv[])
     }
 
     /* Execute HTTP download (IPv6) */
-    ret = nb_http_get_exec(hget, "http://netsurvey.jar.jp/scr/download.php",
+    ret = nb_http_get_exec(hget, "http://"IPV6_SERVER"/scr/download.php",
                            AF_INET6, 5.0);
     if ( 0 != ret ) {
         /* Cannot execute the HTTP (GET) measurement */
@@ -175,7 +179,7 @@ main(int argc, const char *const argv[])
     (void)nb_http_post_set_callback(hpost, cb_hpost, 0.5, NULL);
 
     /* Execute HTTP upload (IPv4) */
-    ret = nb_http_post_exec(hpost, "http://netsurvey.jar.jp/scr/upload.php",
+    ret = nb_http_post_exec(hpost, "http://"IPV4_SERVER"/scr/upload.php",
                             AF_INET, 100 * 1000 * 1000, 5.0);
     if ( 0 != ret ) {
         /* Cannot execute the HTTP (POST) measurement */
@@ -183,7 +187,7 @@ main(int argc, const char *const argv[])
     }
 
     /* Execute HTTP upload (IPv6) */
-    ret = nb_http_post_exec(hpost, "http://netsurvey.jar.jp/scr/upload.php",
+    ret = nb_http_post_exec(hpost, "http://"IPV6_SERVER"/scr/upload.php",
                             AF_INET6, 10 * 1000 * 1000, 5.0);
     if ( 0 != ret ) {
         /* Cannot execute the HTTP (POST) measurement */

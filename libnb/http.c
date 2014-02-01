@@ -797,7 +797,7 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
 
     /* Call a callback function */
     if ( NULL != obj->cb ) {
-        obj->cb(obj, result->hlen, result->clen, t0, t1, tx, rx);
+        obj->cb(obj, result->hlen, result->clen, t0, t1, btx, tx, rx);
     }
 
     /* Upload the body */
@@ -850,7 +850,8 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
         /* Report by calling a callback function */
         if ( NULL != obj->cb ) {
             if ( curtm - prevtm >= obj->cbfreq ) {
-                obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                obj->cb(obj, result->hlen, result->clen, t0, curtm, btx, tx,
+                        rx);
                 prevtm = curtm;
             }
         }
@@ -859,7 +860,8 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
             /* End-of-measurement */
             if ( curtm != prevtm ) {
                 if ( NULL != obj->cb ) {
-                    obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                    obj->cb(obj, result->hlen, result->clen, t0, curtm, btx, tx,
+                            rx);
                 }
             }
 
@@ -921,10 +923,11 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
             /* Report by calling a callback function */
             if ( NULL != obj->cb ) {
                 if ( curtm - prevtm >= obj->cbfreq ) {
-                    obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                    obj->cb(obj, result->hlen, result->clen, t0, curtm, btx, tx,
+                            rx);
                     prevtm = curtm;
-                }            }
-
+                }
+            }
         }
         if ( opt <= 0 ) {
             /* Buffer becomes empty */
@@ -933,7 +936,8 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
             /* End-of-measurement */
             if ( curtm != prevtm ) {
                 if ( NULL != obj->cb ) {
-                    obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                    obj->cb(obj, result->hlen, result->clen, t0, curtm, btx, tx,
+                            rx);
                 }
             }
 
@@ -996,13 +1000,14 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
 
     /* For result */
     result->items[result->cnt].tm = t1;
+    result->items[result->cnt].btx = btx;
     result->items[result->cnt].tx = tx;
     result->items[result->cnt].rx = rx;
     result->cnt++;
 
     /* Call a callback function */
     if ( NULL != obj->cb ) {
-        obj->cb(obj, result->hlen, result->clen, t0, t1, tx, rx);
+        obj->cb(obj, result->hlen, result->clen, t0, t1, btx, tx, rx);
     }
 
     /* Set read length */
@@ -1043,7 +1048,8 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
         /* Report by calling a callback function */
         if ( NULL != obj->cb ) {
             if ( curtm - prevtm >= obj->cbfreq ) {
-                obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+                obj->cb(obj, result->hlen, result->clen, t0, curtm, btx, tx,
+                        rx);
                 prevtm = curtm;
             }
         }
@@ -1053,7 +1059,7 @@ nb_http_post_exec(nb_http_post_t *obj, const char *url, int family,
     }
     if ( curtm != prevtm ) {
         if ( NULL != obj->cb ) {
-            obj->cb(obj, result->hlen, result->clen, t0, curtm, tx, rx);
+            obj->cb(obj, result->hlen, result->clen, t0, curtm, btx, tx, rx);
         }
     }
 
